@@ -7,6 +7,9 @@
 // Helper to convert AEDesc to ParsedAEParam (thread-safe data)
 ParsedAEParam AEDescToParsedParam(const AEDesc* desc);
 
+// Helper to create human-readable string from object specifier
+std::string ObjectSpecifierToString(const ParsedAEParam& param);
+
 // Helper to convert ParsedAEParam to Napi::Value in JS thread
 Napi::Value ParsedParamToNapiValue(Napi::Env env, const ParsedAEParam& param);
 

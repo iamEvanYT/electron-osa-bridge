@@ -8,7 +8,9 @@ A Node.js native addon for handling Apple Events (OSA - Open Scripting Architect
 - 🌐 **Cross-platform compatible** - graceful fallbacks on Windows and Linux
 - ⚡ **Asynchronous event handling** with Promise support
 - 🎯 **Event handler registration** with wildcard pattern support
-- 📝 **TypeScript definitions** included
+- 📝 **Full parameter parsing** including object specifiers and hierarchies
+- 🔍 **Human-readable object representations** for complex Apple Event structures
+- 📝 **TypeScript definitions** with comprehensive type safety
 - 🛡️ **Graceful degradation** - never crashes on unsupported platforms
 - 🔧 **Platform detection** and debugging utilities
 - ⚙️ **Electron compatible** with process type detection
@@ -38,6 +40,8 @@ import {
   on,
   isAppleEventsSupported,
   getPlatformInfo,
+  getObjectSpecifierDescription,
+  extractCommonParams,
   AEEvent,
   AEResult,
 } from "electron-osa-bridge";
@@ -51,6 +55,19 @@ if (isAppleEventsSupported()) {
   // Register a handler for "get data" events
   on("core", "getd", async (event: AEEvent): Promise<AEResult> => {
     console.log("Received Apple Event:", event);
+
+    // Extract common parameters
+    const commonParams = extractCommonParams(event.params);
+
+    // Get human-readable description of object specifiers
+    if (commonParams.directObject) {
+      const description = getObjectSpecifierDescription(
+        commonParams.directObject
+      );
+      console.log("Target object:", description);
+      // Example output: "URL of active tab of front window"
+    }
+
     return "Hello from Node.js!";
   });
 
@@ -151,17 +168,94 @@ console.log("Registered handlers:", handlers);
 // Output: ["coregetd", "****quit"]
 ```
 
+### Parameter Parsing
+
+The module now provides comprehensive parsing of Apple Event parameters, including complex object specifiers.
+
+#### Object Specifiers
+
+Object specifiers represent hierarchical references to application objects (like "URL of active tab of front window"):
+
+```typescript
+on("core", "getd", async (event: AEEvent) => {
+  const directObject = event.params["----"]; // Direct object parameter
+
+  if (isObjectSpecifier(directObject)) {
+    console.log("Object class:", directObject.class); // e.g., "prop"
+    console.log("Property name:", directObject.keyData); // e.g., "URL "
+    console.log("Human readable:", directObject.humanReadable);
+    // Output: "URL of active tab of front window"
+
+    // Access container hierarchy
+    if (directObject.container) {
+      console.log(
+        "Container:",
+        getObjectSpecifierDescription(directObject.container)
+      );
+      // Output: "active tab of front window"
+    }
+  }
+
+  return "Success";
+});
+```
+
+#### Helper Functions for Parameters
+
+```typescript
+// Extract commonly used parameters
+const { directObject, subject, data, file, url } = extractCommonParams(
+  event.params
+);
+
+// Get human-readable description of any object specifier
+const description = getObjectSpecifierDescription(directObject);
+
+// Find all object specifiers in the event
+const allSpecifiers = extractObjectSpecifiers(event.params);
+
+// Type-safe checking
+if (isObjectSpecifier(someParam)) {
+  // TypeScript now knows this is an AEObjectSpecifier
+  console.log(someParam.humanReadable);
+}
+```
+
 ### Types
 
 ```typescript
 // 4-character Apple Event code
 type AECode = string;
 
+// Object specifier structure for Apple Events
+interface AEObjectSpecifier {
+  type: "objectSpecifier";
+  class: string; // Object class (e.g., 'prop', 'cTab', 'cwin')
+  keyForm: string; // Key form (e.g., 'prop', 'indx', 'name')
+  keyData: string; // Key data (property name, index, etc.)
+  keyDataRaw?: string; // Raw hex representation for debugging
+  container?: AEObjectSpecifier; // Container object (recursive)
+  humanReadable?: string; // Human-readable representation
+}
+
+// Common Apple Event parameter types
+type AEParam =
+  | string
+  | number
+  | boolean
+  | null
+  | AEObjectSpecifier
+  | AEParam[]
+  | { [key: string]: AEParam };
+
 // Incoming Apple Event structure
 interface AEEvent {
   suite: AECode; // e.g., 'core'
   event: AECode; // e.g., 'getd'
-  params: Record<AECode, unknown>; // Event parameters (currently empty)
+  params: Record<AECode, AEParam>; // Parsed event parameters
+  targetApp?: string; // Target application bundle ID or process name
+  sourceApp?: string; // Source application info
+  transactionID?: number; // Transaction ID if present
 }
 
 // Return value from handlers
@@ -197,6 +291,68 @@ interface PlatformInfo {
 - `oapp` - Open application
 - `odoc` - Open document
 - `****` - Wildcard (matches any event)
+
+## Parameter Examples
+
+### Simple Property Access
+
+AppleScript: `tell application "Safari" to get URL of front document`
+
+```typescript
+// Apple Event received:
+{
+  suite: "core",
+  event: "getd",
+  params: {
+    "----": {
+      type: "objectSpecifier",
+      class: "prop",
+      keyData: "URL ",
+      container: {
+        type: "objectSpecifier",
+        class: "docu",
+        keyForm: "indx",
+        keyData: "first"
+      },
+      humanReadable: "URL of front document"
+    }
+  },
+  targetApp: "com.apple.Safari"
+}
+```
+
+### Complex Hierarchy
+
+AppleScript: `tell application "Safari" to get URL of active tab of front window`
+
+```typescript
+// Apple Event received:
+{
+  suite: "core",
+  event: "getd",
+  params: {
+    "----": {
+      type: "objectSpecifier",
+      class: "prop",
+      keyData: "URL ",
+      container: {
+        type: "objectSpecifier",
+        class: "cTab",
+        keyForm: "indx",
+        keyData: "first",
+        container: {
+          type: "objectSpecifier",
+          class: "cwin",
+          keyForm: "indx",
+          keyData: "first"
+        }
+      },
+      humanReadable: "URL of active tab of front window"
+    }
+  },
+  targetApp: "com.apple.Safari"
+}
+```
 
 ## Electron Integration
 
@@ -250,6 +406,65 @@ Common error scenarios:
 - **Missing native module**: Error captured in `getPlatformInfo().error`
 - **Electron renderer process**: Warning logged, functions still available but non-functional
 
+## Advanced Usage
+
+### Analyzing Complex Object Hierarchies
+
+```typescript
+on("core", "getd", async (event: AEEvent) => {
+  // Extract all object specifiers from the event
+  const specifiers = extractObjectSpecifiers(event.params);
+
+  specifiers.forEach((spec, index) => {
+    console.log(`Object ${index + 1}:`, spec.humanReadable);
+    console.log(`  Class: ${spec.class}`);
+    console.log(`  Key Data: ${spec.keyData}`);
+    if (spec.keyDataRaw) {
+      console.log(`  Raw Hex: ${spec.keyDataRaw}`);
+    }
+  });
+
+  return "Analysis complete";
+});
+```
+
+### Building Custom Object Descriptions
+
+```typescript
+function buildCustomDescription(param: AEParam): string {
+  if (!isObjectSpecifier(param)) {
+    return String(param);
+  }
+
+  // Custom formatting logic
+  const parts = [];
+  if (param.class === "prop") parts.push("property");
+  if (param.keyData) parts.push(`"${param.keyData.trim()}"`);
+
+  if (param.container) {
+    parts.push("in", buildCustomDescription(param.container));
+  }
+
+  return parts.join(" ");
+}
+```
+
+### Debugging Apple Events
+
+```typescript
+on("****", "****", async (event: AEEvent) => {
+  console.log("=== Apple Event Debug ===");
+  console.log("Event:", formatAEEvent(event));
+  console.log("Parameters:");
+
+  Object.entries(event.params).forEach(([key, value]) => {
+    console.log(`  ${key}:`, getObjectSpecifierDescription(value));
+  });
+
+  return null; // Continue processing
+});
+```
+
 ## Building from Source
 
 ```bash
@@ -275,19 +490,23 @@ xcode-select -p
 
 ## Current Limitations
 
-- **Event parameters**: Currently not parsed from incoming Apple Events (returns empty object)
-- **Event responses**: Basic implementation, may need enhancement for complex return values
+- **Complex return values**: Advanced Apple Event reply structures may need enhancement
 - **Error handling**: Native-level errors may need more detailed reporting
+- **Performance**: Large object hierarchies could benefit from optimization
 
 ## Development Status
 
-This is an active project. Current implementation provides:
+This is an active project with comprehensive Apple Event support:
 
 - ✅ Event handler registration and dispatch
 - ✅ Cross-platform compatibility
-- ✅ Basic Apple Event receiving
-- 🔄 Event parameter parsing (in development)
+- ✅ Full Apple Event parameter parsing
+- ✅ Object specifier parsing with hierarchies
+- ✅ Human-readable object representations
+- ✅ TypeScript type safety
+- ✅ Helper functions for common operations
 - 🔄 Enhanced error reporting (planned)
+- 🔄 Performance optimizations (planned)
 
 ## Contributing
 

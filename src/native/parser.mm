@@ -102,11 +102,33 @@ ParsedAEParam AEDescToParsedParam(const AEDesc* desc) {
                 AEDisposeDesc(&keyFormDesc);
             }
             
-            // Get the key data
+            // Get the key data - handle 4-char codes specially
             AEDesc keyDataDesc;
             err = AEGetKeyDesc(desc, keyAEKeyData, typeWildCard, &keyDataDesc);
             if (err == noErr) {
-                param.objectProps["keyData"] = AEDescToParsedParam(&keyDataDesc);
+                if (keyDataDesc.descriptorType == typeType) {
+                    // This is a 4-char code (like property names)
+                    OSType keyDataCode;
+                    OSErr dataErr = AEGetDescData(&keyDataDesc, &keyDataCode, sizeof(keyDataCode));
+                    if (dataErr == noErr) {
+                        param.objectProps["keyData"] = ParsedAEParam();
+                        param.objectProps["keyData"].stringValue = StringFromFourCharCode(keyDataCode);
+                        param.objectProps["keyData"].isString = true;
+                        param.objectProps["keyData"].isNull = false;
+                        param.objectProps["keyData"].type = "typeType";
+                        
+                        // Debug: Add raw hex representation
+                        char hexStr[16];
+                        snprintf(hexStr, sizeof(hexStr), "0x%08X", (unsigned int)keyDataCode);
+                        param.objectProps["keyDataRaw"] = ParsedAEParam();
+                        param.objectProps["keyDataRaw"].stringValue = std::string(hexStr);
+                        param.objectProps["keyDataRaw"].isString = true;
+                        param.objectProps["keyDataRaw"].isNull = false;
+                    }
+                } else {
+                    // Parse as normal for other types
+                    param.objectProps["keyData"] = AEDescToParsedParam(&keyDataDesc);
+                }
                 AEDisposeDesc(&keyDataDesc);
             }
             
@@ -148,6 +170,40 @@ ParsedAEParam AEDescToParsedParam(const AEDesc* desc) {
     return param;
 }
 
+// Helper to create human-readable string from object specifier
+std::string ObjectSpecifierToString(const ParsedAEParam& param) {
+    if (!param.isObject || param.objectProps.find("type") == param.objectProps.end() ||
+        param.objectProps.at("type").stringValue != "objectSpecifier") {
+        return "";
+    }
+    
+    std::string result;
+    
+    // Get the property/class name
+    auto classIt = param.objectProps.find("class");
+    if (classIt != param.objectProps.end() && classIt->second.isString) {
+        result = classIt->second.stringValue;
+    }
+    
+    // Get the key data (property name)
+    auto keyDataIt = param.objectProps.find("keyData");
+    if (keyDataIt != param.objectProps.end() && keyDataIt->second.isString) {
+        if (!result.empty()) result += " ";
+        result += keyDataIt->second.stringValue;
+    }
+    
+    // Recursively handle container
+    auto containerIt = param.objectProps.find("container");
+    if (containerIt != param.objectProps.end() && containerIt->second.isObject) {
+        std::string containerStr = ObjectSpecifierToString(containerIt->second);
+        if (!containerStr.empty()) {
+            result += " of " + containerStr;
+        }
+    }
+    
+    return result;
+}
+
 // Helper to convert ParsedAEParam to Napi::Value in JS thread
 Napi::Value ParsedParamToNapiValue(Napi::Env env, const ParsedAEParam& param) {
     if (param.isNull) return env.Null();
@@ -168,6 +224,16 @@ Napi::Value ParsedParamToNapiValue(Napi::Env env, const ParsedAEParam& param) {
         for (const auto& pair : param.objectProps) {
             obj.Set(pair.first, ParsedParamToNapiValue(env, pair.second));
         }
+        
+        // Add human-readable representation for object specifiers
+        if (param.objectProps.find("type") != param.objectProps.end() &&
+            param.objectProps.at("type").stringValue == "objectSpecifier") {
+            std::string readable = ObjectSpecifierToString(param);
+            if (!readable.empty()) {
+                obj.Set("humanReadable", Napi::String::New(env, readable));
+            }
+        }
+        
         return obj;
     }
     

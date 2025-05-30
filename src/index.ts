@@ -4,11 +4,32 @@ import bindings from "bindings";
 /** 4-char Apple-event code helpers */
 export type AECode = string; // `"CrSu"`, `"ExJa"`, etc.
 
+/** Object specifier structure for Apple Events */
+export interface AEObjectSpecifier {
+  type: "objectSpecifier";
+  class: string; // Object class (e.g., 'prop', 'cTab', 'cwin')
+  keyForm: string; // Key form (e.g., 'prop', 'indx', 'name')
+  keyData: string; // Key data (property name, index, etc.)
+  keyDataRaw?: string; // Raw hex representation for debugging
+  container?: AEObjectSpecifier; // Container object (recursive)
+  humanReadable?: string; // Human-readable representation like "URL of active tab of front window"
+}
+
+/** Common Apple Event parameter types */
+export type AEParam =
+  | string
+  | number
+  | boolean
+  | null
+  | AEObjectSpecifier
+  | AEParam[]
+  | { [key: string]: AEParam };
+
 /** Incoming Apple-event payload */
 export interface AEEvent {
   suite: AECode; // e.g. 'core'
   event: AECode; // e.g. 'getd'
-  params: Record<AECode, unknown>; // decoded params, keyed by 4-char IDs
+  params: Record<AECode, AEParam>; // decoded params, keyed by 4-char IDs
   targetApp?: string; // target application bundle ID or process name
   sourceApp?: string; // source application info
   transactionID?: number; // transaction ID if present
@@ -200,7 +221,7 @@ export function formatAEEvent(evt: AEEvent): string {
  * Helper function to extract commonly used parameter types
  * from Apple Event parameters
  */
-export function extractCommonParams(params: Record<AECode, unknown>) {
+export function extractCommonParams(params: Record<AECode, AEParam>) {
   return {
     directObject: params["----"], // Direct object parameter
     subject: params["subj"], // Subject parameter
@@ -210,4 +231,64 @@ export function extractCommonParams(params: Record<AECode, unknown>) {
     file: params["file"], // File parameter
     url: params["url "], // URL parameter (note the space)
   };
+}
+
+/**
+ * Type guard to check if a parameter is an object specifier
+ */
+export function isObjectSpecifier(param: AEParam): param is AEObjectSpecifier {
+  return (
+    typeof param === "object" &&
+    param !== null &&
+    !Array.isArray(param) &&
+    "type" in param &&
+    param.type === "objectSpecifier"
+  );
+}
+
+/**
+ * Extract the human-readable representation from an object specifier
+ * Falls back to building it from the components if not available
+ */
+export function getObjectSpecifierDescription(param: AEParam): string {
+  if (!isObjectSpecifier(param)) {
+    return String(param);
+  }
+
+  // Use the native-generated human-readable string if available
+  if (param.humanReadable) {
+    return param.humanReadable;
+  }
+
+  // Fallback: build description from components
+  let description = `${param.class} ${param.keyData}`;
+  if (param.container && isObjectSpecifier(param.container)) {
+    description += ` of ${getObjectSpecifierDescription(param.container)}`;
+  }
+  return description;
+}
+
+/**
+ * Extract all object specifiers from event parameters recursively
+ */
+export function extractObjectSpecifiers(
+  params: Record<AECode, AEParam>
+): AEObjectSpecifier[] {
+  const specifiers: AEObjectSpecifier[] = [];
+
+  function findSpecifiers(param: AEParam) {
+    if (isObjectSpecifier(param)) {
+      specifiers.push(param);
+      if (param.container) {
+        findSpecifiers(param.container);
+      }
+    } else if (Array.isArray(param)) {
+      param.forEach(findSpecifiers);
+    } else if (typeof param === "object" && param !== null) {
+      Object.values(param).forEach(findSpecifiers);
+    }
+  }
+
+  Object.values(params).forEach(findSpecifiers);
+  return specifiers;
 }
