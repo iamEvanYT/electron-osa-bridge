@@ -1,17 +1,17 @@
 # OSA Bridge
 
-A cross-platform Node.js native addon for handling Apple Events (OSA - Open Scripting Architecture) designed specifically for Electron applications.
+A Node.js native addon for handling Apple Events (OSA - Open Scripting Architecture) on macOS with cross-platform compatibility.
 
 ## Features
 
-- 🍎 **Apple Events support** on macOS with native performance
-- 🌐 **Cross-platform compatible** - works on Windows, Linux, and macOS
-- ⚡ **Electron optimized** - designed for both main and renderer processes
-- 🎯 **Event handler registration** with support for specific and wildcard patterns
-- 🔄 **Asynchronous event handling** with Promise support
-- 📝 **TypeScript definitions** included with comprehensive type safety
-- 🛡️ **Graceful fallbacks** - never crashes on unsupported platforms
-- 🔧 **Development friendly** - detailed platform information and debugging tools
+- 🍎 **Apple Events support** on macOS using Carbon framework
+- 🌐 **Cross-platform compatible** - graceful fallbacks on Windows and Linux
+- ⚡ **Asynchronous event handling** with Promise support
+- 🎯 **Event handler registration** with wildcard pattern support
+- 📝 **TypeScript definitions** included
+- 🛡️ **Graceful degradation** - never crashes on unsupported platforms
+- 🔧 **Platform detection** and debugging utilities
+- ⚙️ **Electron compatible** with process type detection
 
 ## Installation
 
@@ -19,24 +19,17 @@ A cross-platform Node.js native addon for handling Apple Events (OSA - Open Scri
 npm install electron-osa-bridge
 ```
 
-### Dependencies & Electron Compatibility
+### Requirements
 
-**Important**: `node-gyp-build` is a **runtime dependency** (not devDependency) - it's required to load the correct prebuilt binary for your platform.
+**macOS:**
 
-**Electron Compatibility:**
+- macOS with Carbon framework support
+- Xcode Command Line Tools: `xcode-select --install`
+- Node.js with native addon support
 
-- ✅ **No `electron-rebuild` required** - Uses NAPI for ABI stability across versions
-- ✅ **Automatic binary selection** - Works with all supported Electron versions
-- ✅ **Universal binaries included** - Supports both Intel and Apple Silicon
-- ✅ **Cross-platform safe** - No runtime errors on any platform
+**Other platforms:**
 
-**Supported versions**: Node.js 18+, Electron 22+ (any version supporting Node.js 18+)
-
-The module will automatically:
-
-- Build the native module on macOS (requires Xcode Command Line Tools)
-- Skip native compilation on other platforms (cross-platform mode)
-- Work seamlessly regardless of platform
+- No additional requirements (module provides no-op implementations)
 
 ## Quick Start
 
@@ -47,68 +40,180 @@ import {
   getPlatformInfo,
   AEEvent,
   AEResult,
-} from "osa-bridge";
+} from "electron-osa-bridge";
 
-// Check platform compatibility
+// Check if Apple Events are supported
 console.log("Platform info:", getPlatformInfo());
 
 if (isAppleEventsSupported()) {
-  console.log("🍎 Apple Events available!");
+  console.log("🍎 Apple Events supported!");
 
-  // Register handlers for Apple Events
+  // Register a handler for "get data" events
   on("core", "getd", async (event: AEEvent): Promise<AEResult> => {
-    console.log("Received get data event:", event);
-    return "Hello from Electron!";
+    console.log("Received Apple Event:", event);
+    return "Hello from Node.js!";
+  });
+
+  // Handle application quit events
+  on("****", "quit", async (event: AEEvent): Promise<AEResult> => {
+    console.log("Quit event received");
+    process.exit(0);
   });
 } else {
-  console.log("🌐 Running in cross-platform mode");
-  // Your app can still register handlers - they just won't receive events
+  console.log("🌐 Running in compatibility mode (no Apple Events)");
 }
 ```
 
 ## Platform Support
 
-| Platform    | Apple Events     | Native Module | Notes                               |
-| ----------- | ---------------- | ------------- | ----------------------------------- |
-| **macOS**   | ✅ Full Support  | ✅ Built      | Complete Apple Events functionality |
-| **Windows** | ❌ Not Available | ⏭️ Skipped    | Graceful fallback mode              |
-| **Linux**   | ❌ Not Available | ⏭️ Skipped    | Graceful fallback mode              |
+| Platform    | Apple Events | Status        | Notes                                  |
+| ----------- | ------------ | ------------- | -------------------------------------- |
+| **macOS**   | ✅ Supported | Native        | Full Apple Events functionality        |
+| **Windows** | ❌ N/A       | Compatibility | Functions available but non-functional |
+| **Linux**   | ❌ N/A       | Compatibility | Functions available but non-functional |
 
-### macOS Requirements
+## API Reference
 
-- macOS 11.0 or later
-- Xcode Command Line Tools: `xcode-select --install`
-- Node.js 18 or later
+### Core Functions
 
-### Other Platforms
+#### `on(suite: AECode, event: AECode, handler: AEHandler): void`
 
-- No additional requirements
-- All functions available (no-op implementations)
-- Zero runtime errors
+Register a handler for Apple Events.
+
+```typescript
+// Handle specific events
+on("core", "getd", async (event) => {
+  return "Data retrieved";
+});
+
+// Use wildcards for any suite
+on("****", "quit", async (event) => {
+  process.exit(0);
+});
+
+// Use wildcards for any event in a suite
+on("core", "****", async (event) => {
+  console.log(`Core event: ${event.event}`);
+  return null;
+});
+```
+
+#### `off(suite: AECode, event: AECode): boolean`
+
+Remove a specific event handler.
+
+```typescript
+const wasRemoved = off("core", "getd");
+console.log("Handler removed:", wasRemoved);
+```
+
+#### `removeAllHandlers(): void`
+
+Remove all registered event handlers.
+
+```typescript
+removeAllHandlers();
+```
+
+#### `isAppleEventsSupported(): boolean`
+
+Check if Apple Events are supported on the current platform.
+
+```typescript
+if (isAppleEventsSupported()) {
+  // Safe to use Apple Events functionality
+}
+```
+
+#### `getPlatformInfo(): PlatformInfo`
+
+Get detailed platform and support information.
+
+```typescript
+const info = getPlatformInfo();
+console.log(info);
+// Output example:
+// {
+//   platform: "darwin",
+//   supported: true,
+//   architecture: "arm64",
+//   nodeVersion: "v20.0.0"
+// }
+```
+
+#### `getRegisteredHandlers(): string[]`
+
+Get list of all registered handler keys (useful for debugging).
+
+```typescript
+const handlers = getRegisteredHandlers();
+console.log("Registered handlers:", handlers);
+// Output: ["coregetd", "****quit"]
+```
+
+### Types
+
+```typescript
+// 4-character Apple Event code
+type AECode = string;
+
+// Incoming Apple Event structure
+interface AEEvent {
+  suite: AECode; // e.g., 'core'
+  event: AECode; // e.g., 'getd'
+  params: Record<AECode, unknown>; // Event parameters (currently empty)
+}
+
+// Return value from handlers
+type AEResult = string | number | boolean | null;
+
+// Event handler function signature
+type AEHandler = (evt: AEEvent) => Promise<AEResult> | AEResult;
+
+// Platform information
+interface PlatformInfo {
+  platform: string; // 'darwin', 'win32', 'linux'
+  supported: boolean; // Apple Events support status
+  error?: string; // Error message if module failed to load
+  architecture: string; // 'x64', 'arm64', etc.
+  nodeVersion: string; // Current Node.js version
+}
+```
+
+## Apple Event Codes
+
+### Common Event Suites
+
+- `core` - Core Apple Events (standard system events)
+- `misc` - Miscellaneous events
+- `reqd` - Required events
+- `****` - Wildcard (matches any suite)
+
+### Common Event Types
+
+- `getd` - Get data
+- `setd` - Set data
+- `quit` - Quit application
+- `oapp` - Open application
+- `odoc` - Open document
+- `****` - Wildcard (matches any event)
 
 ## Electron Integration
+
+The module automatically detects when running in Electron and provides appropriate warnings:
 
 ### Main Process (Recommended)
 
 ```typescript
 // main.js
 import { app } from "electron";
-import { on, isAppleEventsSupported } from "osa-bridge";
+import { on, isAppleEventsSupported } from "electron-osa-bridge";
 
 app.whenReady().then(() => {
   if (isAppleEventsSupported()) {
-    // Handle quit events
-    on("****", "quit", async (event) => {
-      console.log("Application quitting:", event);
+    on("****", "quit", async () => {
       app.quit();
       return null;
-    });
-
-    // Handle file open events
-    on("core", "odoc", async (event) => {
-      console.log("Open document request:", event);
-      // Handle file opening logic
-      return "File opened successfully";
     });
   }
 });
@@ -116,185 +221,81 @@ app.whenReady().then(() => {
 
 ### Renderer Process
 
-```typescript
-// The module detects renderer process and shows appropriate warnings
-// Apple Events only work in the main process
-import { getPlatformInfo, isAppleEventsSupported } from "osa-bridge";
+Apple Events only work in the main process. The module will log a warning if used in a renderer process:
 
-const info = getPlatformInfo();
-console.log("Running in renderer process:", info);
+```
+electron-osa-bridge: Running in Electron renderer process. Apple Events only work in the main process.
 ```
 
-## API Reference
+## Error Handling
 
-### Functions
-
-#### `on(suite: AECode, event: AECode, handler: AEHandler): void`
-
-Register a handler for Apple Events.
+The module is designed to never crash your application:
 
 ```typescript
-// Specific event
+// Safe on all platforms
 on("core", "getd", async (event) => {
-  /* ... */
+  return "This works on macOS, is ignored elsewhere";
 });
 
-// Wildcard suite (any application)
-on("****", "quit", async (event) => {
-  /* ... */
-});
-
-// Wildcard event (any event from core suite)
-on("core", "****", async (event) => {
-  /* ... */
-});
-```
-
-#### `off(suite: AECode, event: AECode): boolean`
-
-Remove a specific handler.
-
-```typescript
-const removed = off("core", "getd");
-console.log("Handler removed:", removed);
-```
-
-#### `removeAllHandlers(): void`
-
-Remove all registered handlers.
-
-#### `isAppleEventsSupported(): boolean`
-
-Check if Apple Events are supported on the current platform.
-
-#### `getPlatformInfo(): PlatformInfo`
-
-Get detailed platform information.
-
-```typescript
-interface PlatformInfo {
-  platform: string; // 'darwin', 'win32', 'linux'
-  supported: boolean; // Apple Events support status
-  error?: string; // Error message if module failed to load
-  architecture: string; // 'x64', 'arm64'
-  nodeVersion: string; // Node.js version
+// Check for errors
+const info = getPlatformInfo();
+if (info.error) {
+  console.log("Module load error:", info.error);
 }
 ```
 
-#### `getRegisteredHandlers(): string[]`
+Common error scenarios:
 
-Get list of all registered handler keys (useful for debugging).
+- **Non-macOS platforms**: Functions are no-ops, `isAppleEventsSupported()` returns `false`
+- **Missing native module**: Error captured in `getPlatformInfo().error`
+- **Electron renderer process**: Warning logged, functions still available but non-functional
 
-### Types
-
-```typescript
-type AECode = string; // 4-character Apple Event code
-
-interface AEEvent {
-  suite: AECode; // Event suite (e.g., 'core')
-  event: AECode; // Event ID (e.g., 'getd')
-  params: Record<AECode, unknown>; // Event parameters
-}
-
-type AEResult = string | number | boolean | null;
-type AEHandler = (evt: AEEvent) => Promise<AEResult> | AEResult;
-```
-
-## Apple Event Codes
-
-### Common Suites
-
-- `core` - Core suite (standard events)
-- `misc` - Miscellaneous events
-- `reqd` - Required events
-- `****` - Wildcard (any suite)
-
-### Common Events
-
-- `getd` - Get data
-- `setd` - Set data
-- `quit` - Quit application
-- `oapp` - Open application
-- `odoc` - Open document
-- `****` - Wildcard (any event)
-
-## Building
+## Building from Source
 
 ```bash
-# Build everything
+# Install dependencies
+npm install
+
+# Build native module (macOS only)
 npm run build
 
-# Build only TypeScript
-npm run build:ts
-
-# Build only native module (macOS)
-npm run build:native
-
-# Test platform compatibility
-npm test
-
-# Development with auto-rebuild
-npm run dev
-```
-
-## Testing
-
-Test the module on any platform:
-
-```bash
+# Run tests
 npm test
 ```
 
-This will verify:
-
-- ✅ Module imports correctly
-- ✅ Platform detection works
-- ✅ Handler registration/removal
-- ✅ Cross-platform compatibility
-- ✅ Electron compatibility
-
-## Troubleshooting
-
-### Build Issues on macOS
+### Build Requirements (macOS)
 
 ```bash
 # Install Xcode Command Line Tools
 xcode-select --install
 
-# Reinstall with fresh build
-npm run clean && npm install && npm run build
+# Verify installation
+xcode-select -p
 ```
 
-### Module Not Working in Electron
+## Current Limitations
 
-- Ensure you're using it in the main process
-- Check that your Electron app has proper permissions
-- Verify with `getPlatformInfo()` that the module loaded correctly
+- **Event parameters**: Currently not parsed from incoming Apple Events (returns empty object)
+- **Event responses**: Basic implementation, may need enhancement for complex return values
+- **Error handling**: Native-level errors may need more detailed reporting
 
-### Cross-Platform Development
+## Development Status
 
-```typescript
-// Safe pattern for cross-platform apps
-import { isAppleEventsSupported, on } from "osa-bridge";
+This is an active project. Current implementation provides:
 
-// Always safe to call, even on non-macOS
-on("core", "quit", async (event) => {
-  // This handler will only be called on macOS
-  return handleQuit(event);
-});
-
-// Check support before showing macOS-specific UI
-if (isAppleEventsSupported()) {
-  showAppleEventsFeatures();
-}
-```
+- ✅ Event handler registration and dispatch
+- ✅ Cross-platform compatibility
+- ✅ Basic Apple Event receiving
+- 🔄 Event parameter parsing (in development)
+- 🔄 Enhanced error reporting (planned)
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Test on multiple platforms
-4. Submit a pull request
+2. Create a feature branch: `git checkout -b feature-name`
+3. Test on macOS (if possible)
+4. Ensure cross-platform compatibility
+5. Submit a pull request
 
 ## License
 
