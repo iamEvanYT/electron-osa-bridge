@@ -1,7 +1,7 @@
 {
-  "name": "electron-osa-bridge",
-  "version": "0.0.7",
-  "description": "Cross-platform Apple Events bridge for Electron applications",
+  "name": "osa-bridge",
+  "version": "0.0.2",
+  "description": "Cross-platform Apple Events bridge for Node & Electron applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -53,12 +53,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/iamEvanYT/electron-osa-bridge.git"
+    "url": "https://github.com/iamEvanYT/osa-bridge.git"
   },
   "license": "MIT",
   "author": "iamEvan",
   "bugs": {
-    "url": "https://github.com/iamEvanYT/electron-osa-bridge/issues"
+    "url": "https://github.com/iamEvanYT/osa-bridge/issues"
   },
-  "homepage": "https://github.com/iamEvanYT/electron-osa-bridge#readme"
+  "homepage": "https://github.com/iamEvanYT/osa-bridge#readme"
 }

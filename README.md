@@ -18,7 +18,7 @@ A Node.js native addon for handling Apple Events (OSA - Open Scripting Architect
 ## Installation
 
 ```bash
-npm install electron-osa-bridge
+npm install osa-bridge
 ```
 
 ### Requirements
@@ -44,7 +44,7 @@ import {
   extractCommonParams,
   AEEvent,
   AEResult,
-} from "electron-osa-bridge";
+} from "osa-bridge";
 
 // Check if Apple Events are supported
 console.log("Platform info:", getPlatformInfo());
@@ -363,7 +363,7 @@ The module automatically detects when running in Electron and provides appropria
 ```typescript
 // main.js
 import { app } from "electron";
-import { on, isAppleEventsSupported } from "electron-osa-bridge";
+import { on, isAppleEventsSupported } from "osa-bridge";
 
 app.whenReady().then(() => {
   if (isAppleEventsSupported()) {
@@ -380,7 +380,7 @@ app.whenReady().then(() => {
 Apple Events only work in the main process. The module will log a warning if used in a renderer process:
 
 ```
-electron-osa-bridge: Running in Electron renderer process. Apple Events only work in the main process.
+osa-bridge: Running in Electron renderer process. Apple Events only work in the main process.
 ```
 
 ## Error Handling
