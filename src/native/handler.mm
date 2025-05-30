@@ -42,29 +42,140 @@ OSErr HandleAE(const AppleEvent* evt, AppleEvent* reply, void* refcon) {
     // Parse parameters synchronously here where we have access to the Apple Event
     aeData.params = ParseAEParametersThreadSafe(evt);
     
-    // Call JS dispatcher asynchronously
-    if (tsfn) {
-        auto callback = [](Napi::Env env, Napi::Function jsDispatch, AEEventData* payload) {
-            if (jsDispatch) {
-                Napi::Object aeObj = CreateAEEventObject(env, *payload);
-                Napi::Function doneCallback = Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
-                    return info.Env().Undefined();
-                });
-                jsDispatch.Call({aeObj, doneCallback});
-            }
-            delete payload;
-        };
-        
-        AEEventData* heapData = new AEEventData(aeData);
-        
-        napi_status status = tsfn.NonBlockingCall(heapData, callback);
-        
-        if (status != napi_ok) {
-            delete heapData;
-        }
-    }
+    // Check if this event expects a reply
+    // Simply check if reply is not NULL - the OS provides a reply descriptor when one is expected
+    Boolean hasReply = (reply != NULL);
     
-    return noErr;
+    // For events that expect a reply, we need to suspend the event and handle it asynchronously
+    if (hasReply) {
+        // Create a suspended reply
+        AppleEvent* suspendedReply = new AppleEvent;
+        *suspendedReply = *reply;
+        
+        // Suspend the Apple Event (tell the system we'll reply later)
+        err = AESuspendTheCurrentEvent(evt);
+        if (err != noErr) {
+            delete suspendedReply;
+            return err;
+        }
+        
+        // Call JS dispatcher asynchronously with the suspended reply
+        if (tsfn) {
+            struct CallbackData {
+                AEEventData* payload;
+                AppleEvent* suspendedReply;
+                AppleEvent suspendedEvent;
+            };
+            
+            auto callbackData = new CallbackData{new AEEventData(aeData), suspendedReply, *evt};
+            
+            auto callback = [](Napi::Env env, Napi::Function jsDispatch, CallbackData* data) {
+                if (jsDispatch) {
+                    Napi::Object aeObj = CreateAEEventObject(env, *data->payload);
+                    
+                    // Create a proper done callback that handles the suspended reply
+                    Napi::Function doneCallback = Napi::Function::New(env, [data](const Napi::CallbackInfo& info) {
+                        Napi::Env env = info.Env();
+                        
+                        OSErr replyErr = noErr;
+                        
+                        // Check if error was passed
+                        if (info.Length() > 0 && !info[0].IsNull() && !info[0].IsUndefined()) {
+                            // Error case
+                            std::string errorMessage = info[0].ToString().Utf8Value();
+                            CFStringRef errorStr = CFStringCreateWithCString(NULL, errorMessage.c_str(), kCFStringEncodingUTF8);
+                            if (errorStr) {
+                                AEPutParamPtr(data->suspendedReply, keyErrorString, typeUTF8Text, 
+                                            CFStringGetCStringPtr(errorStr, kCFStringEncodingUTF8), 
+                                            CFStringGetLength(errorStr));
+                                CFRelease(errorStr);
+                            }
+                            replyErr = errAEEventFailed;
+                        } 
+                        // Check if result was passed
+                        else if (info.Length() > 1) {
+                            // Success case - put the result in the reply
+                            Napi::Value jsResult = info[1];
+                            if (jsResult.IsString()) {
+                                std::string strValue = jsResult.ToString().Utf8Value();
+                                AEPutParamPtr(data->suspendedReply, keyDirectObject, typeUTF8Text, 
+                                            strValue.c_str(), strValue.length());
+                            } else if (jsResult.IsNumber()) {
+                                double numValue = jsResult.ToNumber().DoubleValue();
+                                if (numValue == floor(numValue)) {
+                                    SInt32 intValue = static_cast<SInt32>(numValue);
+                                    AEPutParamPtr(data->suspendedReply, keyDirectObject, typeSInt32, 
+                                                &intValue, sizeof(intValue));
+                                } else {
+                                    AEPutParamPtr(data->suspendedReply, keyDirectObject, typeIEEE64BitFloatingPoint, 
+                                                &numValue, sizeof(numValue));
+                                }
+                            } else if (jsResult.IsBoolean()) {
+                                Boolean boolValue = jsResult.ToBoolean().Value();
+                                AEPutParamPtr(data->suspendedReply, keyDirectObject, typeBoolean, 
+                                            &boolValue, sizeof(boolValue));
+                            } else if (jsResult.IsNull() || jsResult.IsUndefined()) {
+                                // Put null in reply
+                                AEPutParamPtr(data->suspendedReply, keyDirectObject, typeNull, NULL, 0);
+                            }
+                        }
+                        
+                        // Resume the suspended event with the reply
+                        AEResumeTheCurrentEvent(&data->suspendedEvent, data->suspendedReply, 
+                                               (AEEventHandlerUPP)kAENoDispatch, (SRefCon)(intptr_t)replyErr);
+                        
+                        // Clean up
+                        delete data->suspendedReply;
+                        delete data;
+                        
+                        return env.Undefined();
+                    });
+                    
+                    jsDispatch.Call({aeObj, doneCallback});
+                }
+                
+                delete data->payload;
+            };
+            
+            napi_status status = tsfn.NonBlockingCall(callbackData, callback);
+            
+            if (status != napi_ok) {
+                // Failed to call JS - resume with error
+                AEResumeTheCurrentEvent(evt, reply, (AEEventHandlerUPP)kAENoDispatch, (SRefCon)(intptr_t)errAEEventFailed);
+                delete callbackData->payload;
+                delete callbackData->suspendedReply;
+                delete callbackData;
+                return errAEEventFailed;
+            }
+        }
+        
+        // Return special code to indicate we'll handle the reply later
+        return errAEWaitCanceled;
+    } else {
+        // No reply expected - handle as before (fire and forget)
+        if (tsfn) {
+            auto callback = [](Napi::Env env, Napi::Function jsDispatch, AEEventData* payload) {
+                if (jsDispatch) {
+                    Napi::Object aeObj = CreateAEEventObject(env, *payload);
+                    Napi::Function doneCallback = Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
+                        return info.Env().Undefined();
+                    });
+                    jsDispatch.Call({aeObj, doneCallback});
+                }
+                delete payload;
+            };
+            
+            AEEventData* heapData = new AEEventData(aeData);
+            
+            napi_status status = tsfn.NonBlockingCall(heapData, callback);
+            
+            if (status != napi_ok) {
+                delete heapData;
+            }
+        }
+        
+        return noErr;
+    }
 }
 
 /** JS tells native: "start listening for (suite,event)" */
