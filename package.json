@@ -1,0 +1,63 @@
+{
+  "name": "electron-osa-bridge",
+  "version": "0.0.3",
+  "description": "Cross-platform Apple Events bridge for Electron applications",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "keywords": [
+    "electron",
+    "apple-events",
+    "osa",
+    "macos",
+    "cross-platform",
+    "applescript"
+  ],
+  "files": [
+    "build/Release/osa_bridge.node",
+    "dist/",
+    "src/native/",
+    "scripts/build-native.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepublishOnly": "npm run clean && npm run build",
+    "clean": "node -e \"require('fs').rmSync('build', { recursive: true, force: true })\"",
+    "build": "npm run build:ts && npm run build:native",
+    "build:ts": "tsc",
+    "build:native": "node-gyp configure && node-gyp build",
+    "test": "node scripts/test-platform.js"
+  },
+  "dependencies": {
+    "bindings": "^1.5.0",
+    "node-addon-api": "^8.3.1"
+  },
+  "devDependencies": {
+    "@types/bindings": "^1.5.5",
+    "@types/node": "^22.15.26",
+    "node-gyp": "^11.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/osa-bridge.git"
+  },
+  "license": "MIT",
+  "author": "iamEvan",
+  "bugs": {
+    "url": "https://github.com/iamEvanYT/electron-osa-bridge/issues"
+  },
+  "homepage": "https://github.com/iamEvanYT/electron-osa-bridge#readme"
+}
