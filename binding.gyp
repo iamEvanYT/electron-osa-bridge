@@ -1,7 +1,12 @@
 {
   "targets": [{
     "target_name": "osa_bridge",
-    "sources": ["src/native/osa_bridge.mm"],
+    "sources": [
+      "src/native/osa_bridge.mm",
+      "src/native/utils.mm",
+      "src/native/parser.mm",
+      "src/native/handler.mm"
+    ],
     "include_dirs": [
       "<!@(node -p \"require('node-addon-api').include\")",
       "include"
