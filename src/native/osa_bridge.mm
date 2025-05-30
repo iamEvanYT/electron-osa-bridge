@@ -21,19 +21,206 @@ std::string StringFromFourCharCode(OSType code) {
     return std::string(str);
 }
 
-// Structure to pass Apple Event data to JS
+// Enhanced structure to pass Apple Event data to JS
 struct AEEventData {
     std::string suite;
     std::string event;
-    // For now, we'll keep params simple
+    std::vector<uint8_t> eventData; // Raw Apple Event data for parameter parsing
+    std::string targetApp;
+    std::string sourceApp;
+    int32_t transactionID;
+    bool hasTransaction;
+    
+    AEEventData() : transactionID(0), hasTransaction(false) {}
 };
+
+// Helper to convert AEDesc to Napi::Value
+Napi::Value AEDescToNapiValue(Napi::Env env, const AEDesc* desc) {
+    if (!desc) return env.Null();
+    
+    switch (desc->descriptorType) {
+        case typeChar:
+        case typeUTF8Text: {
+            Size dataSize = AEGetDescDataSize(desc);
+            if (dataSize > 0) {
+                std::vector<char> buffer(dataSize + 1, 0);
+                OSErr err = AEGetDescData(desc, buffer.data(), dataSize);
+                if (err == noErr) {
+                    return Napi::String::New(env, buffer.data());
+                }
+            }
+            break;
+        }
+        case typeSInt32: {
+            SInt32 value;
+            OSErr err = AEGetDescData(desc, &value, sizeof(value));
+            if (err == noErr) {
+                return Napi::Number::New(env, value);
+            }
+            break;
+        }
+        case typeIEEE64BitFloatingPoint: {
+            double value;
+            OSErr err = AEGetDescData(desc, &value, sizeof(value));
+            if (err == noErr) {
+                return Napi::Number::New(env, value);
+            }
+            break;
+        }
+        case typeBoolean: {
+            Boolean value;
+            OSErr err = AEGetDescData(desc, &value, sizeof(value));
+            if (err == noErr) {
+                return Napi::Boolean::New(env, value);
+            }
+            break;
+        }
+        case typeNull:
+            return env.Null();
+        case typeAEList: {
+            long count;
+            OSErr err = AECountItems(desc, &count);
+            if (err == noErr) {
+                Napi::Array array = Napi::Array::New(env, count);
+                for (long i = 1; i <= count; i++) {
+                    AEDesc item;
+                    err = AEGetNthDesc(desc, i, typeWildCard, nullptr, &item);
+                    if (err == noErr) {
+                        array.Set(i - 1, AEDescToNapiValue(env, &item));
+                        AEDisposeDesc(&item);
+                    }
+                }
+                return array;
+            }
+            break;
+        }
+        case typeAERecord: {
+            long count;
+            OSErr err = AECountItems(desc, &count);
+            if (err == noErr) {
+                Napi::Object obj = Napi::Object::New(env);
+                for (long i = 1; i <= count; i++) {
+                    AEKeyword keyword;
+                    AEDesc item;
+                    err = AEGetNthDesc(desc, i, typeWildCard, &keyword, &item);
+                    if (err == noErr) {
+                        std::string key = StringFromFourCharCode(keyword);
+                        obj.Set(key, AEDescToNapiValue(env, &item));
+                        AEDisposeDesc(&item);
+                    }
+                }
+                return obj;
+            }
+            break;
+        }
+        default: {
+            // For unknown types, try to get as raw data
+            Size dataSize = AEGetDescDataSize(desc);
+            if (dataSize > 0 && dataSize < 1024) { // Reasonable size limit
+                std::vector<uint8_t> buffer(dataSize);
+                OSErr err = AEGetDescData(desc, buffer.data(), dataSize);
+                if (err == noErr) {
+                    Napi::Object result = Napi::Object::New(env);
+                    result.Set("type", Napi::String::New(env, StringFromFourCharCode(desc->descriptorType)));
+                    result.Set("data", Napi::String::New(env, "<binary data>"));
+                    return result;
+                }
+            }
+            break;
+        }
+    }
+    
+    return env.Undefined();
+}
+
+// Helper to parse Apple Event parameters from raw event data
+Napi::Object ParseAEParametersToJS(Napi::Env env, const std::vector<uint8_t>& eventData) {
+    Napi::Object params = Napi::Object::New(env);
+    
+    if (eventData.empty()) return params;
+    
+    // Reconstruct the Apple Event from raw data
+    AEDesc eventDesc;
+    OSErr err = AECreateDesc(typeAppleEvent, eventData.data(), eventData.size(), &eventDesc);
+    if (err != noErr) return params;
+    
+    // Parse parameters from the Apple Event
+    long count;
+    err = AECountItems(&eventDesc, &count);
+    if (err == noErr) {
+        for (long i = 1; i <= count; i++) {
+            AEKeyword keyword;
+            AEDesc param;
+            err = AEGetNthDesc(&eventDesc, i, typeWildCard, &keyword, &param);
+            if (err == noErr) {
+                std::string paramKey = StringFromFourCharCode(keyword);
+                // Skip system attributes (they start with 'key')
+                if (paramKey.find("key") != 0) {
+                    params.Set(paramKey, AEDescToNapiValue(env, &param));
+                }
+                AEDisposeDesc(&param);
+            }
+        }
+    }
+    
+    AEDisposeDesc(&eventDesc);
+    return params;
+}
+
+// Helper to get application info from Apple Event
+void ParseTargetApplication(const AppleEvent* evt, AEEventData& aeData) {
+    AEDesc targetDesc;
+    OSErr err = AEGetAttributeDesc(evt, keyAddressAttr, typeWildCard, &targetDesc);
+    if (err == noErr) {
+        if (targetDesc.descriptorType == typeApplicationBundleID) {
+            Size dataSize = AEGetDescDataSize(&targetDesc);
+            if (dataSize > 0) {
+                std::vector<char> buffer(dataSize + 1, 0);
+                err = AEGetDescData(&targetDesc, buffer.data(), dataSize);
+                if (err == noErr) {
+                    aeData.targetApp = std::string(buffer.data());
+                }
+            }
+        } else if (targetDesc.descriptorType == typeProcessSerialNumber) {
+            ProcessSerialNumber psn;
+            err = AEGetDescData(&targetDesc, &psn, sizeof(psn));
+            if (err == noErr) {
+                // For modern macOS, we'll just indicate it's a process serial number
+                // Getting the actual process name requires more complex modern APIs
+                aeData.targetApp = "ProcessSerialNumber";
+            }
+        } else if (targetDesc.descriptorType == typeKernelProcessID) {
+            pid_t pid;
+            err = AEGetDescData(&targetDesc, &pid, sizeof(pid));
+            if (err == noErr) {
+                aeData.targetApp = "PID:" + std::to_string(pid);
+            }
+        }
+        AEDisposeDesc(&targetDesc);
+    }
+}
 
 // Helper to create JS object from AEEventData
 Napi::Object CreateAEEventObject(Napi::Env env, const AEEventData& data) {
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("suite", Napi::String::New(env, data.suite));
     obj.Set("event", Napi::String::New(env, data.event));
-    obj.Set("params", Napi::Object::New(env)); // Empty for now
+    
+    // Parse and create params object
+    Napi::Object params = ParseAEParametersToJS(env, data.eventData);
+    obj.Set("params", params);
+    
+    // Add additional metadata
+    if (!data.targetApp.empty()) {
+        obj.Set("targetApp", Napi::String::New(env, data.targetApp));
+    }
+    if (!data.sourceApp.empty()) {
+        obj.Set("sourceApp", Napi::String::New(env, data.sourceApp));
+    }
+    if (data.hasTransaction) {
+        obj.Set("transactionID", Napi::Number::New(env, data.transactionID));
+    }
+    
     return obj;
 }
 
@@ -57,7 +244,27 @@ static OSErr HandleAE(const AppleEvent* evt, AppleEvent* reply, void* refcon) {
         aeData.event = StringFromFourCharCode(eventID);
     }
     
-    // TODO: Parse event parameters and populate aeData.params
+    // Get transaction ID if present
+    SInt32 transactionID;
+    err = AEGetAttributePtr(evt, keyTransactionIDAttr, typeSInt32,
+                           NULL, &transactionID, sizeof(transactionID), &actualSize);
+    if (err == noErr) {
+        aeData.transactionID = transactionID;
+        aeData.hasTransaction = true;
+    }
+    
+    // Capture raw Apple Event data for parameter parsing in JS thread
+    Size dataSize = AEGetDescDataSize(evt);
+    if (dataSize > 0) {
+        aeData.eventData.resize(dataSize);
+        err = AEGetDescData(evt, aeData.eventData.data(), dataSize);
+        if (err != noErr) {
+            aeData.eventData.clear(); // Clear on error
+        }
+    }
+    
+    // Parse target application info
+    ParseTargetApplication(evt, aeData);
     
     // Call JS dispatcher asynchronously
     if (tsfn) {
@@ -74,6 +281,7 @@ static OSErr HandleAE(const AppleEvent* evt, AppleEvent* reply, void* refcon) {
         };
         
         AEEventData* heapData = new AEEventData(aeData);
+        
         napi_status status = tsfn.NonBlockingCall(heapData, callback);
         if (status != napi_ok) {
             delete heapData;

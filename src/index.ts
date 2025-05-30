@@ -9,6 +9,9 @@ export interface AEEvent {
   suite: AECode; // e.g. 'core'
   event: AECode; // e.g. 'getd'
   params: Record<AECode, unknown>; // decoded params, keyed by 4-char IDs
+  targetApp?: string; // target application bundle ID or process name
+  sourceApp?: string; // source application info
+  transactionID?: number; // transaction ID if present
 }
 
 /** Return value – anything JS-serialisable turns into an AEDesc */
@@ -164,4 +167,47 @@ if (
   console.warn(
     "osa-bridge: Running in Electron renderer process. Apple Events only work in the main process."
   );
+}
+
+/**
+ * Helper function to get a human-readable representation of an Apple Event
+ * Useful for debugging and logging
+ */
+export function formatAEEvent(evt: AEEvent): string {
+  const parts = [`${evt.suite}.${evt.event}`];
+
+  if (evt.targetApp) {
+    parts.push(`target: ${evt.targetApp}`);
+  }
+
+  if (evt.sourceApp) {
+    parts.push(`source: ${evt.sourceApp}`);
+  }
+
+  if (evt.transactionID !== undefined) {
+    parts.push(`txn: ${evt.transactionID}`);
+  }
+
+  const paramCount = Object.keys(evt.params).length;
+  if (paramCount > 0) {
+    parts.push(`params: ${paramCount}`);
+  }
+
+  return parts.join(", ");
+}
+
+/**
+ * Helper function to extract commonly used parameter types
+ * from Apple Event parameters
+ */
+export function extractCommonParams(params: Record<AECode, unknown>) {
+  return {
+    directObject: params["----"], // Direct object parameter
+    subject: params["subj"], // Subject parameter
+    result: params["----"], // Result parameter (same as direct object)
+    data: params["data"], // Data parameter
+    text: params["ctxt"], // Text parameter
+    file: params["file"], // File parameter
+    url: params["url "], // URL parameter (note the space)
+  };
 }

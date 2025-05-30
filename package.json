@@ -1,6 +1,6 @@
 {
   "name": "electron-osa-bridge",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Cross-platform Apple Events bridge for Electron applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
